@@ -1,4 +1,3 @@
-// File too large for cat, using the file_create approach after removal
 await gas.updateStatus(oid,useAiEdit?"Ред. ИИ":"На ревью");toast("📊 Sheets+Drive ✓","success");}catch(e){toast("Sheets: "+e.message,"error");}}
       toast(useAiEdit?"→ Ред. ИИ":"→ Ревью","success");
     }catch(e){toast(e.message,"error");}setTranslating(false);
