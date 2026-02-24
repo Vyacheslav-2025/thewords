@@ -78,30 +78,68 @@ class FileManager{
   async ensureSubFolder(orderFolderId,subName){
     return this.findOrCreateFolder(subName,orderFolderId);
   }
-  // Upload file via multipart — NO base64 through GAS!
-  async uploadFile(file,folderId,fileName){
-    const metadata={name:fileName||file.name,parents:[folderId]};
-    const form=new FormData();
-    form.append("metadata",new Blob([JSON.stringify(metadata)],{type:"application/json"}));
-    form.append("file",file);
-    const r=await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,size",{
-      method:"POST",headers:{"Authorization":"Bearer "+this.token},body:form
+  // Upload file via multipart/related (Правильный подход для Google Drive)
+  async uploadFile(file, folderId, fileName) {
+    const metadata = { name: fileName || file.name, parents: [folderId] };
+    const boundary = "-------314159265358979323846";
+    const delimiter = `\r\n--${boundary}\r\n`;
+    const closeDelimiter = `\r\n--${boundary}--`;
+
+    const fileData = await file.arrayBuffer();
+
+    let body = delimiter;
+    body += "Content-Type: application/json; charset=UTF-8\r\n\r\n";
+    body += JSON.stringify(metadata);
+    body += delimiter;
+    body += `Content-Type: ${file.type || "application/octet-stream"}\r\n\r\n`;
+
+    const bodyBlob = new Blob([body, fileData, closeDelimiter], {
+      type: `multipart/related; boundary=${boundary}`
     });
-    if(!r.ok)throw new Error("Upload failed: "+r.status);
-    const d=await r.json();
-    if(!d.id)throw new Error("Upload: no file ID returned");
+
+    const r = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,size", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + this.token },
+      body: bodyBlob // Browser automatically uses the Blob's type (multipart/related)
+    });
+
+    if (!r.ok) {
+      const err = await r.text();
+      throw new Error(`Upload failed (${r.status}): ${err.substring(0, 100)}`);
+    }
+    const d = await r.json();
+    if (!d.id) throw new Error("Upload: no file ID returned");
     return d;
   }
-  // Upload text content as a file
-  async uploadText(text,folderId,fileName,mimeType){
-    const metadata={name:fileName,parents:[folderId]};
-    const form=new FormData();
-    form.append("metadata",new Blob([JSON.stringify(metadata)],{type:"application/json"}));
-    form.append("file",new Blob([text],{type:mimeType||"text/plain"}));
-    const r=await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,size",{
-      method:"POST",headers:{"Authorization":"Bearer "+this.token},body:form
+
+  // Upload text content as a file via multipart/related
+  async uploadText(text, folderId, fileName, mimeType) {
+    const metadata = { name: fileName, parents: [folderId] };
+    const boundary = "-------314159265358979323846";
+    const delimiter = `\r\n--${boundary}\r\n`;
+    const closeDelimiter = `\r\n--${boundary}--`;
+
+    let body = delimiter;
+    body += "Content-Type: application/json; charset=UTF-8\r\n\r\n";
+    body += JSON.stringify(metadata);
+    body += delimiter;
+    body += `Content-Type: ${mimeType || "text/plain"}; charset=UTF-8\r\n\r\n`;
+    body += text;
+    body += closeDelimiter;
+
+    const r = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,size", {
+      method: "POST",
+      headers: { 
+        "Authorization": "Bearer " + this.token,
+        "Content-Type": `multipart/related; boundary=${boundary}`
+      },
+      body: body
     });
-    if(!r.ok)throw new Error("Upload text failed: "+r.status);
+
+    if (!r.ok) {
+      const err = await r.text();
+      throw new Error(`Upload text failed (${r.status}): ${err.substring(0, 100)}`);
+    }
     return r.json();
   }
   // List files in folder
