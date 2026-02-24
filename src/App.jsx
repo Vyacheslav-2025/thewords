@@ -10,15 +10,10 @@ const DEF_AE="Проверь перевод. Сравни с оригинало�
 const AI_PROVIDERS=[
   {id:"gemini",name:"Gemini",icon:"🔷",models:["gemini-2.0-flash","gemini-2.0-flash-lite","gemini-1.5-pro"]},
   {id:"openai",name:"ChatGPT",icon:"🟢",models:["gpt-4o","gpt-4o-mini","gpt-4-turbo"]},
-  {id:"claude",name:"Claude",icon:"🟠",models:["claude-sonnet-4-20250514","claude-haiku-4-5-20251001"]},
-  {id:"grok",name:"Grok",icon:"⚡",models:["grok-3","grok-3-mini"]},
-  {id:"deepseek",name:"DeepSeek",icon:"🔵",models:["deepseek-chat","deepseek-reasoner"]}
+  {id:"claude",name:"Claude",icon:"🟠",models:["claude-sonnet-4-20250514","claude-haiku-4-5-20251001"]}
 ];
-const DEF_EXEC=[{id:1,name:"Переводчик 1",role:"translator",email:"",telegram:"",langs:["ru-kk","kk-ru"],spec:["legal","personal"],services:[{name:"Перевод",price:800,unit:"стр."}]},{id:2,name:"Переводчик 2",role:"translator",email:"",telegram:"",langs:["ru-en","en-ru"],spec:["technical","financial"],services:[{name:"Перевод",price:1000,unit:"стр."}]}];
-const DEF_SCENARIOS=[
-  {id:"standard",name:"Стандартный",steps:[{stage:"translate",ai:"gemini",model:"gemini-2.0-flash"},{stage:"review",ai:"human",model:""}],complexities:["phys_template","phys_template_new","phys_new","jur_translate"]},
-  {id:"ai_edit",name:"С ред. ИИ",steps:[{stage:"translate",ai:"gemini",model:"gemini-2.0-flash"},{stage:"ai_edit",ai:"gemini",model:"gemini-2.0-flash"},{stage:"review",ai:"human",model:""}],complexities:["jur_ai_edit","jur_ai_edit_plus"]}
-];
+const DEF_EXEC=[{id:1,name:"Переводчик 1",role:"translator",email:"",telegram:"",langs:["ru-kk","kk-ru"],spec:["legal","personal"],services:[{name:"Перевод",price:800,unit:"стр."}]}];
+const DEF_SCENARIOS=[{id:"standard",name:"Стандартный",steps:[{stage:"translate",ai:"gemini",model:"gemini-2.0-flash"},{stage:"review",ai:"human",model:""}],complexities:["phys_template","phys_template_new","phys_new","jur_translate"]}];
 const DRIVE_SCOPES="https://www.googleapis.com/auth/drive.file";
 
 // ═══ AI CALLER ═══
@@ -30,14 +25,10 @@ async function callAI(key,mod,prompt,imgs,provider){
     const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${mod}:generateContent?key=${key}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts}],generationConfig:{temperature:0.2,maxOutputTokens:8192}})});
     const d=await r.json();return d?.candidates?.[0]?.content?.parts?.[0]?.text||"";
   }
-  if(provider==="openai"){const r=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({model:mod,messages:[{role:"user",content:prompt}],max_tokens:8192})});const d=await r.json();return d?.choices?.[0]?.message?.content||"";}
-  if(provider==="claude"){const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:mod,max_tokens:8192,messages:[{role:"user",content:prompt}]})});const d=await r.json();return d?.content?.[0]?.text||"";}
-  if(provider==="grok"){const r=await fetch("https://api.x.ai/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({model:mod,messages:[{role:"user",content:prompt}],max_tokens:8192})});const d=await r.json();return d?.choices?.[0]?.message?.content||"";}
-  if(provider==="deepseek"){const r=await fetch("https://api.deepseek.com/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({model:mod,messages:[{role:"user",content:prompt}],max_tokens:8192})});const d=await r.json();return d?.choices?.[0]?.message?.content||"";}
-  throw new Error("Unknown provider: "+provider);
+  return ""; 
 }
 
-// ═══ FILE MANAGER (OAuth & Multipart) ═══
+// ═══ FILE MANAGER ═══
 class FileManager{
   constructor(clientId){this.clientId=clientId;this.token=null;this.rootId=null;}
   async init(){
@@ -66,9 +57,7 @@ class FileManager{
     if(!this.rootId)this.rootId=await this.findOrCreateFolder("The Words Bureau");
     return this.findOrCreateFolder(orderName,this.rootId);
   }
-  async ensureSubFolder(orderFolderId,subName){
-    return this.findOrCreateFolder(subName,orderFolderId);
-  }
+  async ensureSubFolder(orderFolderId,subName){return this.findOrCreateFolder(subName,orderFolderId);}
   async uploadFile(file,folderId,fileName){
     const metadata={name:fileName||file.name,parents:[folderId]};
     const b="-------314159265358979323846";
@@ -91,11 +80,15 @@ class FileManager{
   ok(){return !!this.token;}
 }
 
-// ═══ GAS (REST API - STRICTLY POST) ═══
+// ═══ GAS (REST API - STRICTLY POST TEXT/PLAIN) ═══
 class GAS{
   constructor(u){this.u=u}
   async c(p){const r=await fetch(this.u+"?"+new URLSearchParams(p),{redirect:"follow"});const d=await r.json();if(!d.success)throw new Error(d.error);return d.data}
-  async post(body){const r=await fetch(this.u,{method:"POST",body:JSON.stringify(body),redirect:"follow"});const d=await r.json();if(!d.success)throw new Error(d.error);return d.data}
+  async post(body){
+    // text/plain prevents CORS preflight OPTIONS request
+    const r=await fetch(this.u,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(body),redirect:"follow"});
+    const d=await r.json();if(!d.success)throw new Error(d.error);return d.data;
+  }
   co(o){return this.post({action:"createOrder",orderId:o.orderId,clientName:o.clientName,clientType:o.clientType,langPair:o.langPair,docType:o.docType,wordCount:String(o.wordCount||0),translator:o.translator,comment:o.comment||""})}
   us(id,s,cm){return this.post({action:"updateStatus",orderId:id,status:s,comment:cm||""})}
   rm(id){return this.post({action:"deleteOrder",orderId:id})}
@@ -110,6 +103,14 @@ function getMime(f){if(f.type)return f.type;const n=(f.name||"").toLowerCase();i
 function orderFolderName(o){const d=new Date();const ds=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")+"_"+String(d.getHours()).padStart(2,"0")+String(d.getMinutes()).padStart(2,"0");return(o.clientName||"Клиент").replace(/[^\w\sа-яА-Я-]/gi,"").substring(0,30)+"_"+(o.langPair||"xx-xx")+"_"+ds;}
 const LS={g(k,d){try{const v=localStorage.getItem("tw_"+k);return v?JSON.parse(v):d??null}catch{return d??null}},s(k,v){try{localStorage.setItem("tw_"+k,JSON.stringify(v))}catch{}}};
 
+// ═══ UI COMPONENTS ═══
+function PipeV({stage,ae,onJump}){
+  const s=["intake","classify","translate"];
+  if(ae)s.push("ai_edit"); s.push("review","deliver");
+  const ci=s.indexOf(stage);
+  return <div className="PP">{s.map((x,i)=><div key={x} className={`ps ${i<ci?"ok":i===ci?"on":""}`} onClick={()=>onJump(x)} title={"Перейти на: "+SM[x].l}>{SM[x].i} <span>{SM[x].l}</span></div>)}</div>;
+}
+
 // ═══ CSS ═══
 const CSS=`@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
 :root{--b0:#08080D;--b1:#0F0F17;--b2:rgba(22,22,32,.8);--b3:#1C1C2A;--bd:#252538;--bh:#3A3A55;--t1:#EDEDF4;--t2:#9494AD;--t3:#5C5C75;--ac:#E8C547;--ad:#E8C54725;--ok:#3DDC84;--od:#3DDC8418;--er:#F44;--in:#4A9EF5;--pu:#A66BF5;--or:#F5943A}
@@ -121,6 +122,9 @@ const CSS=`@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@300
 .Sf{padding:8px 12px;border-top:1px solid var(--bd);font-size:9px}.sfr{display:flex;justify-content:space-between;padding:1px 0}.sfr .l{color:var(--t3)}.sfr .v{color:var(--t2);font-family:"JetBrains Mono",monospace;font-size:8px}
 .M{flex:1;display:flex;flex-direction:column;overflow:hidden}.TB{height:42px;border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 16px;gap:8px;background:var(--b1);flex-shrink:0}.TB h2{font-size:13px;font-weight:600}
 .dot{width:5px;height:5px;border-radius:50%;background:var(--er)}.dot.on{background:var(--ok)}.ist{display:flex;align-items:center;gap:4px;font-size:9px;color:var(--t3);margin-left:auto}
+.PP{display:flex;gap:2px;padding:8px 16px;background:var(--b1);border-bottom:1px solid var(--bd);flex-shrink:0;overflow-x:auto}
+.ps{flex:1;display:flex;align-items:center;justify-content:center;gap:3px;padding:5px 6px;border-radius:5px;font-size:9px;background:var(--b3);border:1px solid var(--bd);color:var(--t3);white-space:nowrap;cursor:pointer;transition:all .12s}
+.ps:hover{border-color:var(--bh)}.ps.on{background:var(--ad);border-color:var(--ac);color:var(--ac);font-weight:500}.ps.ok{background:var(--od);border-color:transparent;color:var(--ok)}
 .CT{flex:1;overflow-y:auto;padding:16px}.cd{background:var(--b2);border:1px solid var(--bd);border-radius:9px;padding:14px;margin-bottom:10px;backdrop-filter:blur(8px)}
 .hd{display:flex;align-items:center;gap:6px;margin-bottom:10px;flex-wrap:wrap}.hd h3{font-size:12px;font-weight:600}.bg{font-size:8px;padding:2px 7px;border-radius:12px;background:var(--ad);color:var(--ac);font-weight:500}
 .ds{display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:4px;font-size:10px;margin-bottom:6px}.ds.ok{background:var(--od);color:var(--ok)}.ds.er{background:#F4444418;color:var(--er)}.ds.in{background:#4A9EF518;color:var(--in)}.ds.wt{background:#F5943A18;color:var(--or)}
@@ -128,12 +132,13 @@ const CSS=`@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@300
 .fi,.fsl{width:100%;padding:7px 10px;background:var(--b1);border:1px solid var(--bd);border-radius:5px;color:var(--t1);font-family:inherit;font-size:11px;outline:none}.fi:focus,.fsl:focus{border-color:var(--ac)}.fsl option{background:var(--b1)}
 .rw{display:grid;gap:8px}.r2{grid-template-columns:1fr 1fr}.r3{grid-template-columns:1fr 1fr 1fr}
 .uz{border:2px dashed var(--bd);border-radius:8px;padding:16px;text-align:center;cursor:pointer;background:var(--b1)}.uz:hover,.uz.dg{border-color:var(--ac);background:var(--ad)}
+.thu{display:flex;gap:4px;flex-wrap:wrap;margin-top:5px}.thm{width:48px;height:48px;object-fit:cover;border-radius:4px;border:1px solid var(--bd);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:10px;background:var(--b3);overflow:hidden}
 .fp{display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--b1);border-radius:5px;margin-top:4px;font-size:10px}.fp .fn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fp .fz{font-size:8px;color:var(--t3);font-family:"JetBrains Mono",monospace}.fp .fr{background:none;border:none;color:var(--er);cursor:pointer;font-size:12px}
 .bt{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:5px;font-family:inherit;font-size:11px;font-weight:500;cursor:pointer;border:none;transition:all .12s}
 .bp{background:var(--ac);color:var(--b0)}.bp:hover{filter:brightness(1.1)}.bp:disabled{opacity:.35;cursor:not-allowed}.bs{background:var(--b3);border:1px solid var(--bd);color:var(--t1)}.bs:hover{border-color:var(--bh)}
 .bo{background:var(--ok);color:var(--b0)}.bv{background:var(--pu);color:#fff}.bm{padding:3px 9px;font-size:10px}.bts{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap}
 .cxg{display:grid;grid-template-columns:1fr 1fr;gap:3px}.cxc{padding:5px 7px;border-radius:4px;border:1px solid var(--bd);background:var(--b1);cursor:pointer;font-family:inherit;color:var(--t2);font-size:9px;text-align:left;line-height:1.3}.cxc:hover{border-color:var(--bh)}.cxc.sl{border-color:var(--pu);background:#A66BF518;color:var(--pu)}
-.tc{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tc{display:grid;grid-template-columns:1fr 1fr;gap:10px}.tp{background:var(--b1);border:1px solid var(--bd);border-radius:6px;overflow:hidden}.tph{padding:6px 10px;border-bottom:1px solid var(--bd);font-size:9px;text-transform:uppercase;letter-spacing:.3px;color:var(--t3);display:flex;justify-content:space-between}.tpb{padding:10px;min-height:140px;font-size:11px;line-height:1.6;white-space:pre-wrap}.tpb textarea{width:100%;min-height:140px;background:transparent;border:none;color:var(--t1);font-family:inherit;font-size:11px;line-height:1.6;resize:vertical;outline:none}
 .ot{width:100%;border-collapse:separate;border-spacing:0}.ot th{text-align:left;padding:5px 7px;font-size:8px;text-transform:uppercase;color:var(--t3);border-bottom:1px solid var(--bd)}.ot td{padding:5px 7px;font-size:10px;border-bottom:1px solid var(--bd)}.ot tr:hover td{background:var(--b3)}
 .stg{display:inline-flex;padding:2px 6px;border-radius:10px;font-size:8px;font-weight:500}.stg.si{background:#4A9EF518;color:var(--in)}.stg.str{background:#A66BF518;color:var(--pu)}.stg.sae{background:#F5943A18;color:var(--or)}.stg.srv{background:#E8474718;color:var(--er)}.stg.sdl{background:var(--od);color:var(--ok)}.stg.sar{background:var(--bd);color:var(--t3)}
 .spn{display:inline-block;width:12px;height:12px;border:2px solid var(--bd);border-top-color:var(--ac);border-radius:50%;animation:sp .7s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}
@@ -189,6 +194,15 @@ export default function App(){
     }else{const ok=await fm.current.init();sDriveOk(ok);if(ok)toast("Drive подключён","success");}
   };
 
+  // Метод для обновления стейджа с таблицей
+  const jumpStage=async(oId, newStage)=>{
+    sOrd(p=>p.map(o=>o.id===oId?{...o,stage:newStage}:o));
+    if(gok&&gas.current){
+      try{await gas.current.us(oId, SM[newStage]?.l||newStage);}
+      catch(e){toast("Ошибка таблицы: "+e.message, "error");}
+    }
+  };
+
   // СОРТИРОВКА
   const sortedOrd = [...ord].sort((a, b) => {
     if (sortBy === "date_desc") {
@@ -199,18 +213,14 @@ export default function App(){
     if (sortBy === "name_asc") {
       return (a.clientName || "").localeCompare(b.clientName || "");
     }
-    // id_desc (default)
     return (b.id || "").localeCompare(a.id || "");
   });
 
   // УДАЛЕНИЕ И АРХИВАЦИЯ
   const handleArchive = async (id) => {
     if(!window.confirm("Отправить заказ в архив?")) return;
-    sOrd(p => p.map(o => o.id === id ? { ...o, stage: "archive" } : o));
-    if(gok && gas.current) {
-      try { await gas.current.us(id, "Архив"); toast("Отправлен в архив", "info"); } 
-      catch(e) { toast("Ошибка таблицы: "+e.message, "error"); }
-    }
+    jumpStage(id, "archive");
+    toast("Отправлен в архив", "info");
   };
 
   const handleDelete = async (id) => {
@@ -246,10 +256,10 @@ export default function App(){
       <div className="CT">
         {pg==="new"&&<NewOrd {...{cur,sCur,ord,sOrd,ak,aok,md,gas:gas.current,gok,execs,toast,getKey,fm:fm.current,driveOk,onGoAnalysis:(oid)=>{sPg("analysis");setTimeout(()=>{window.__twSel=oid},100)}}}/>}
         {pg==="ord"&&<OrdPage ord={sortedOrd} handleArchive={handleArchive} handleDelete={handleDelete} />}
-        {pg==="analysis"&&<AnalysisPage ord={sortedOrd} sOrd={sOrd} execs={execs} scenarios={scenarios} toast={toast} getKey={getKey} gas={gas.current} gok={gok} fm={fm.current} driveOk={driveOk} md={md} onGoPage={p=>sPg(p)} handleArchive={handleArchive} handleDelete={handleDelete}/>}
+        {pg==="analysis"&&<AnalysisPage ord={sortedOrd} sOrd={sOrd} execs={execs} scenarios={scenarios} toast={toast} getKey={getKey} gas={gas.current} gok={gok} fm={fm.current} driveOk={driveOk} md={md} onGoPage={p=>sPg(p)} handleArchive={handleArchive} handleDelete={handleDelete} jumpStage={jumpStage}/>}
         {pg==="transl"&&<TranslPage ord={sortedOrd} handleArchive={handleArchive} handleDelete={handleDelete}/>}
         {pg==="editor"&&<EditorPage ord={sortedOrd} handleArchive={handleArchive} handleDelete={handleDelete}/>}
-        {pg==="rev"&&<RevPage ord={sortedOrd} sOrd={sOrd} gas={gas.current} gok={gok} toast={toast} fm={fm.current} driveOk={driveOk} handleArchive={handleArchive} handleDelete={handleDelete}/>}
+        {pg==="rev"&&<RevPage ord={sortedOrd} sOrd={sOrd} gas={gas.current} gok={gok} toast={toast} fm={fm.current} driveOk={driveOk} handleArchive={handleArchive} handleDelete={handleDelete} jumpStage={jumpStage}/>}
         {pg==="exec"&&<ExecPage execs={execs} sExecs={sExecs} toast={toast}/>}
         {pg==="set"&&<SetPage {...{keys,sKeys:v=>{sKeys(v);sv("keys",v)},gu,sGu:v=>{sGu(v);sv("gu",v)},md,sMd:v=>{sMd(v);sv("md",v)},aep,sAep:v=>{sAep(v);sv("aep",v)},scenarios,sScenarios:v=>{sScenarios(v);sv("scenarios",v)},driveClientId,sDriveClientId:v=>{sDriveClientId(v);sv("driveClientId",v)},gok,driveOk,connectDrive,toast}}/>}
       </div>
@@ -307,6 +317,9 @@ function NewOrd({cur,sCur,ord,sOrd,ak,aok,md,gas,gok,execs,toast,getKey,fm,drive
     {cur&&<button className="bt bs bm" onClick={reset} style={{marginBottom:8}}>← Новый</button>}
     <div className="cd"><div className="hd"><h3>📸 Скриншоты</h3><span className="bg">OCR</span></div>
       <div className={`uz ${dg?"dg":""}`} onClick={()=>ssr.current?.click()} onDragOver={e=>{e.preventDefault();sDg(true)}} onDragLeave={()=>sDg(false)} onDrop={e=>{e.preventDefault();sDg(false);addSS(Array.from(e.dataTransfer.files))}}><div style={{fontSize:20}}>📸</div><div style={{fontSize:11,color:"var(--t2)"}}>PNG, JPG, PDF</div><input ref={ssr} type="file" accept="image/*,.pdf" multiple style={{display:"none"}} onChange={e=>addSS(Array.from(e.target.files))}/></div>
+      {/* ВОССТАНОВЛЕНО: Миниатюры */}
+      {ss.length>0&&<><div className="thu">{ss.map((s,i)=><div key={i} className="thm" onClick={()=>sSS(p=>p.filter((_,j)=>j!==i))} title="Удалить">{s.mime?.includes("pdf")?"📄PDF":<img src={s.prev} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>}</div>)}</div>
+      <div className="bts"><button className="bt bp" onClick={scanSS} disabled={scn||!aok}>{scn?<><span className="spn"/> ...</>:"🔍 Распознать "+ss.length}</button></div></>}
     </div>
     <div className="cd"><div className="hd"><h3>📥 Данные</h3><span className="bg">Шаг 1</span></div>
       {!driveOk&&<div className="ds er">⚠ Drive не подключён. Подключи в Настройках.</div>}
@@ -324,7 +337,7 @@ function NewOrd({cur,sCur,ord,sOrd,ak,aok,md,gas,gok,execs,toast,getKey,fm,drive
 }
 
 // ═══ ANALYSIS PAGE ═══
-function AnalysisPage({ord,sOrd,execs,toast,getKey,gas,gok,fm,driveOk,md,onGoPage,handleArchive,handleDelete}){
+function AnalysisPage({ord,sOrd,execs,toast,getKey,gas,gok,fm,driveOk,md,onGoPage,handleArchive,handleDelete,jumpStage}){
   const active=ord.filter(o=>o.stage!=="deliver"&&o.stage!=="archive");
   const[sel,sSel]=useState(null);
   const[running,sRunning]=useState(false);
@@ -385,16 +398,24 @@ function AnalysisPage({ord,sOrd,execs,toast,getKey,gas,gok,fm,driveOk,md,onGoPag
   };
 
   if(o) return(<><button className="bt bs bm" onClick={()=>sSel(null)} style={{marginBottom:8}}>← Назад</button>
-    <div className="cd"><div className="hd"><h3>🔍 Анализ: {o.id}</h3><span className="bg">{o.clientName} · {SM[o.stage]?.l}</span></div>
-      {o.price&&<div className="ds in">💰 {o.price}₸</div>}{o.notes&&<div className="ds in">📝 {o.notes}</div>}
-      <div className="rw r3" style={{marginBottom:8}}>
-        <div className="fg"><label className="fl">Клиент</label><input className="fi" value={o.clientName||""} onChange={e=>upd("clientName",e.target.value)}/></div>
-        <div className="fg"><label className="fl">₸ Сумма</label><input className="fi" value={o.price||""} onChange={e=>upd("price",e.target.value)}/></div>
+    <div className="cd" style={{padding:0, overflow:"hidden"}}>
+      {/* ВОССТАНОВЛЕНО: Индикатор прогресса */}
+      <PipeV stage={o.stage} ae={o.useAiEdit} onJump={s=>jumpStage(o.id, s)} />
+      <div style={{padding: 14}}>
+        <div className="hd"><h3>🔍 Анализ: {o.id}</h3><span className="bg">{o.clientName}</span></div>
+        {o.price&&<div className="ds in">💰 {o.price}₸</div>}{o.notes&&<div className="ds in">📝 {o.notes}</div>}
+        <div className="rw r3" style={{marginBottom:8}}>
+          <div className="fg"><label className="fl">Клиент</label><input className="fi" value={o.clientName||""} onChange={e=>upd("clientName",e.target.value)}/></div>
+          <div className="fg"><label className="fl">₸ Сумма</label><input className="fi" value={o.price||""} onChange={e=>upd("price",e.target.value)}/></div>
+          {/* ВОССТАНОВЛЕНО: Выбор исполнителя */}
+          <div className="fg"><label className="fl">Исполнитель</label><select className="fsl" value={o.assignedTo||""} onChange={e=>upd("assignedTo",e.target.value)}><option value="">Не назначен</option>{execs.map(ex=><option key={ex.id} value={ex.name}>{ex.name}</option>)}</select></div>
+        </div>
+        <div className="cd" style={{borderColor:"var(--ac)", marginTop: 12}}><div className="hd"><h3>▶️ Запуск</h3></div>
+          {runProg>0&&<><div className="lbr"><div className="lbi" style={{width:runProg+"%"}}/></div><div style={{fontSize:9,color:"var(--t3)",marginBottom:4}}>{runMsg}</div></>}
+          <button className="bt bp" style={{padding:"10px 28px",fontSize:13}} disabled={running} onClick={runFullPipeline}>{running?<><span className="spn"/> Работа...</>:"🚀 Начать работу"}</button>
+        </div>
       </div>
-      <div className="cd" style={{borderColor:"var(--ac)"}}><div className="hd"><h3>▶️ Запуск</h3></div>
-      {runProg>0&&<><div className="lbr"><div className="lbi" style={{width:runProg+"%"}}/></div><div style={{fontSize:9,color:"var(--t3)",marginBottom:4}}>{runMsg}</div></>}
-      <button className="bt bp" style={{padding:"10px 28px",fontSize:13}} disabled={running} onClick={runFullPipeline}>{running?<><span className="spn"/> Работа...</>:"🚀 Начать работу"}</button>
-    </div></div>
+    </div>
   </>);
 
   if(!active.length)return<div className="em"><div className="ei">🔍</div><p>Нет активных заказов</p></div>;
@@ -472,29 +493,73 @@ function OrdPage({ord,handleArchive,handleDelete}){
 }
 
 // ═══ REVIEW ═══
-function RevPage({ord,sOrd,gas,gok,toast,fm,driveOk,handleArchive,handleDelete}){
-  const rv=ord.filter(o=>o.stage==="review");const[aid,sAid]=useState(null);const a=rv.find(o=>o.id===aid);
+function RevPage({ord,sOrd,gas,gok,toast,fm,driveOk,handleArchive,handleDelete,jumpStage}){
+  const rv=ord.filter(o=>o.stage==="review");const[aid,sAid]=useState(null);const[txt,sTxt]=useState("");
+  const a=rv.find(o=>o.id===aid);
+  
   const ok=async()=>{if(!a)return;
-    if(driveOk&&fm.ok()&&a.editedTranslation){
+    if(driveOk&&fm.ok()&&txt){
       try{const fn=a.orderFolderName||orderFolderName(a);const fid=await fm.ensureOrderFolder(fn);const ffid=await fm.ensureSubFolder(fid,"04_Final");
-        await fm.uploadText(a.editedTranslation,ffid,a.id+"_FINAL_"+a.langPair+".txt");toast("Drive: финал сохранён","success");
+        await fm.uploadText(txt,ffid,a.id+"_FINAL_"+a.langPair+".txt");toast("Drive: финал сохранён","success");
       }catch(e){toast("Drive final: "+e.message,"error");}
     }
-    sOrd(p=>p.map(o=>o.id===aid?{...o,stage:"deliver"}:o));
+    sOrd(p=>p.map(o=>o.id===aid?{...o,stage:"deliver",editedTranslation:txt}:o));
     if(gok&&gas){try{await gas.us(aid,"Готов");}catch{}}toast(aid+" ✅","success");sAid(null);};
   
   if(!rv.length&&!aid)return<div className="em"><div className="ei">✏️</div><p>Пусто</p></div>;
-  if(a){return<><button className="bt bs bm" onClick={()=>sAid(null)} style={{marginBottom:8}}>←</button>
-    <div className="cd"><div className="hd"><h3>✏️ {a.id}</h3><span className="bg">{a.clientName}</span></div>
-    <div style={{fontSize:10,color:"var(--t3)",marginBottom:6}}>{a.langPair?.toUpperCase().replace("-"," → ")} · {a.wordCount} сл.</div>
-    <div className="bts"><button className="bt bo" onClick={ok}>✅ Одобрить</button></div></div></>;
+  if(a){
+    const lf = a.langPair?.split("-")[0]||"ru";
+    const lt = a.langPair?.split("-")[1]||"en";
+    const origFiles=(a.fileLinks||[]).filter(f=>f.stage==="original");
+    const transFiles=(a.fileLinks||[]).filter(f=>f.stage==="ai_translation"||f.stage==="editing");
+    
+    return<><button className="bt bs bm" onClick={()=>sAid(null)} style={{marginBottom:8}}>← Вернуться в список</button>
+    <div className="cd" style={{padding:0, overflow:"hidden"}}>
+      {/* ВОССТАНОВЛЕНО: Индикатор этапов */}
+      <PipeV stage={a.stage} ae={a.useAiEdit} onJump={s=>jumpStage(a.id, s)} />
+      
+      <div style={{padding: 14}}>
+        <div className="hd"><h3>✏️ {a.id}</h3><span className="bg">{a.clientName}</span></div>
+        <div style={{fontSize:10,color:"var(--t3)",marginBottom:6}}>{DT.find(d=>d.id===a.docType)?.icon} {a.langPair?.toUpperCase().replace("-"," → ")} · {a.wordCount} сл.{a.price&&" · 💰"+a.price+"₸"}</div>
+        {a.notes&&<div className="ds in">📝 {a.notes}</div>}
+        
+        {/* Ссылки на Drive */}
+        <div style={{padding:10,background:"var(--b1)",border:"1px solid var(--bd)",borderRadius:5,marginBottom:10}}>
+          <div style={{fontSize:12,fontWeight:600,marginBottom:6}}>📁 Файлы на Drive</div>
+          {origFiles.map((f,i)=><div key={i} className="flink"><a href={f.url} target="_blank" rel="noopener">📄 {f.name} (Оригинал)</a></div>)}
+          {transFiles.map((f,i)=><div key={i} className="flink"><a href={f.url} target="_blank" rel="noopener">🤖 {f.name} (Перевод/Ред)</a></div>)}
+          {(a.fileLinks||[]).filter(f=>f.stage==="errors").map((f,i)=><div key={i} className="flink"><a href={f.url} target="_blank" rel="noopener" style={{color:"var(--or)"}}>📋 {f.name} (Отчёт об ошибках)</a></div>)}
+        </div>
+
+        {/* ВОССТАНОВЛЕНО: Двухколоночный интерфейс с текстами */}
+        <div className="tc">
+          <div className="tp">
+            <div className="tph">Оригинал ({lf.toUpperCase()})</div>
+            <div className="tpb">
+              {origFiles.length>0?origFiles.map((fl,i)=><div key={i} style={{padding:"3px 0"}}><a href={fl.url} target="_blank" rel="noopener" style={{fontSize:11}}>📄 Открыть файл</a></div>):null}
+              {a.sourceText&&<div style={{marginTop:8,fontSize:10,color:"var(--t2)",whiteSpace:"pre-wrap"}}>{a.sourceText}</div>}
+            </div>
+          </div>
+          <div className="tp">
+            <div className="tph">Перевод ({lt.toUpperCase()})</div>
+            <div className="tpb">
+              <textarea value={txt} onChange={e=>sTxt(e.target.value)} />
+            </div>
+          </div>
+        </div>
+
+        <div className="bts" style={{marginTop: 12}}><button className="bt bo" onClick={ok}>✅ Одобрить и сохранить</button></div>
+      </div>
+    </div></>;
   }
-  return rv.map(o=><div key={o.id} className="cd" style={{cursor:"pointer"}} onClick={()=>sAid(o.id)}>
+  return rv.map(o=><div key={o.id} className="cd" style={{cursor:"pointer"}} onClick={()=>{sAid(o.id); sTxt(o.editedTranslation||o.aiTranslation);}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div>
       <div style={{fontSize:12,fontWeight:600}}>✏️ {o.id} — {o.clientName}</div>
       <div style={{fontSize:10,color:"var(--t3)"}}>{o.langPair?.toUpperCase().replace("-"," → ")}</div>
     </div>
     <div style={{display:"flex",gap:4, alignItems: "center"}}>
+       {/* ВОССТАНОВЛЕНО: Статусы с ошибками в списке */}
+       {(o.fileLinks||[]).some(f=>f.stage==="errors")&&<div style={{marginRight:8,fontSize:10,color:"var(--or)",fontWeight:600}}>⚠ Ошибки ИИ</div>}
        <button className="bt bp bm" style={{marginRight: 6}}>Ревью →</button>
        <button className="bt bs bm" onClick={(e)=>{e.stopPropagation(); handleArchive(o.id)}} title="В архив">📦</button>
        <button className="bt bs bm" onClick={(e)=>{e.stopPropagation(); handleDelete(o.id)}} style={{color:"var(--er)"}} title="Удалить">🗑</button>
