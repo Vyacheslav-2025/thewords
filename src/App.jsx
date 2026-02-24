@@ -10,10 +10,15 @@ const DEF_AE="Проверь перевод. Сравни с оригинало�
 const AI_PROVIDERS=[
   {id:"gemini",name:"Gemini",icon:"🔷",models:["gemini-2.0-flash","gemini-2.0-flash-lite","gemini-1.5-pro"]},
   {id:"openai",name:"ChatGPT",icon:"🟢",models:["gpt-4o","gpt-4o-mini","gpt-4-turbo"]},
-  {id:"claude",name:"Claude",icon:"🟠",models:["claude-sonnet-4-20250514","claude-haiku-4-5-20251001"]}
+  {id:"claude",name:"Claude",icon:"🟠",models:["claude-sonnet-4-20250514","claude-haiku-4-5-20251001"]},
+  {id:"grok",name:"Grok",icon:"⚡",models:["grok-3","grok-3-mini"]},
+  {id:"deepseek",name:"DeepSeek",icon:"🔵",models:["deepseek-chat","deepseek-reasoner"]}
 ];
-const DEF_EXEC=[{id:1,name:"Переводчик 1",role:"translator",email:"",telegram:"",langs:["ru-kk","kk-ru"],spec:["legal","personal"],services:[{name:"Перевод",price:800,unit:"стр."}]}];
-const DEF_SCENARIOS=[{id:"standard",name:"Стандартный",steps:[{stage:"translate",ai:"gemini",model:"gemini-2.0-flash"},{stage:"review",ai:"human",model:""}],complexities:["phys_template","phys_template_new","phys_new","jur_translate"]}];
+const DEF_EXEC=[{id:1,name:"Переводчик 1",role:"translator",email:"",telegram:"",langs:["ru-kk","kk-ru"],spec:["legal","personal"],services:[{name:"Перевод",price:800,unit:"стр."}]},{id:2,name:"Переводчик 2",role:"translator",email:"",telegram:"",langs:["ru-en","en-ru"],spec:["technical","financial"],services:[{name:"Перевод",price:1000,unit:"стр."}]}];
+const DEF_SCENARIOS=[
+  {id:"standard",name:"Стандартный",steps:[{stage:"translate",ai:"gemini",model:"gemini-2.0-flash"},{stage:"review",ai:"human",model:""}],complexities:["phys_template","phys_template_new","phys_new","jur_translate"]},
+  {id:"ai_edit",name:"С ред. ИИ",steps:[{stage:"translate",ai:"gemini",model:"gemini-2.0-flash"},{stage:"ai_edit",ai:"gemini",model:"gemini-2.0-flash"},{stage:"review",ai:"human",model:""}],complexities:["jur_ai_edit","jur_ai_edit_plus"]}
+];
 const DRIVE_SCOPES="https://www.googleapis.com/auth/drive.file";
 
 // ═══ AI CALLER ═══
@@ -25,11 +30,14 @@ async function callAI(key,mod,prompt,imgs,provider){
     const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${mod}:generateContent?key=${key}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts}],generationConfig:{temperature:0.2,maxOutputTokens:8192}})});
     const d=await r.json();return d?.candidates?.[0]?.content?.parts?.[0]?.text||"";
   }
-  // Other providers (openai, claude) skipped for brevity, same as your original
-  return ""; 
+  if(provider==="openai"){const r=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({model:mod,messages:[{role:"user",content:prompt}],max_tokens:8192})});const d=await r.json();return d?.choices?.[0]?.message?.content||"";}
+  if(provider==="claude"){const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:mod,max_tokens:8192,messages:[{role:"user",content:prompt}]})});const d=await r.json();return d?.content?.[0]?.text||"";}
+  if(provider==="grok"){const r=await fetch("https://api.x.ai/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({model:mod,messages:[{role:"user",content:prompt}],max_tokens:8192})});const d=await r.json();return d?.choices?.[0]?.message?.content||"";}
+  if(provider==="deepseek"){const r=await fetch("https://api.deepseek.com/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({model:mod,messages:[{role:"user",content:prompt}],max_tokens:8192})});const d=await r.json();return d?.choices?.[0]?.message?.content||"";}
+  throw new Error("Unknown provider: "+provider);
 }
 
-// ═══ FILE MANAGER ═══
+// ═══ FILE MANAGER (OAuth & Multipart) ═══
 class FileManager{
   constructor(clientId){this.clientId=clientId;this.token=null;this.rootId=null;}
   async init(){
@@ -58,6 +66,9 @@ class FileManager{
     if(!this.rootId)this.rootId=await this.findOrCreateFolder("The Words Bureau");
     return this.findOrCreateFolder(orderName,this.rootId);
   }
+  async ensureSubFolder(orderFolderId,subName){
+    return this.findOrCreateFolder(subName,orderFolderId);
+  }
   async uploadFile(file,folderId,fileName){
     const metadata={name:fileName||file.name,parents:[folderId]};
     const b="-------314159265358979323846";
@@ -80,8 +91,7 @@ class FileManager{
   ok(){return !!this.token;}
 }
 
-// ═══ GAS (REST API) ═══
-// ИСПОЛЬЗУЕТ ТОЛЬКО POST-ЗАПРОСЫ!
+// ═══ GAS (REST API - STRICTLY POST) ═══
 class GAS{
   constructor(u){this.u=u}
   async c(p){const r=await fetch(this.u+"?"+new URLSearchParams(p),{redirect:"follow"});const d=await r.json();if(!d.success)throw new Error(d.error);return d.data}
@@ -155,7 +165,7 @@ export default function App(){
   const[tts,sTts]=useState([]);
   const[gok,sGok]=useState(false);
   const[driveOk,sDriveOk]=useState(false);
-  const[sortBy,setSortBy]=useState("id_desc"); // НОВАЯ ФИШКА: Сортировка
+  const[sortBy,setSortBy]=useState("id_desc");
 
   const gas=useRef(null);
   const fm=useRef(new FileManager(""));
@@ -179,7 +189,7 @@ export default function App(){
     }else{const ok=await fm.current.init();sDriveOk(ok);if(ok)toast("Drive подключён","success");}
   };
 
-  // ЛОГИКА СОРТИРОВКИ
+  // СОРТИРОВКА
   const sortedOrd = [...ord].sort((a, b) => {
     if (sortBy === "date_desc") {
       const dA = new Date(a.createdAt || 0).getTime();
@@ -212,7 +222,6 @@ export default function App(){
     }
   };
 
-  // Не считаем архивные в бейджах
   const bs = stage => ord.filter(o => o.stage === stage).length;
   const nav=[{id:"new",ic:"🏠",lb:"Новый заказ"},{id:"ord",ic:"📋",lb:"Все Заказы",bd:ord.length||null},{id:"analysis",ic:"🔍",lb:"Анализ",bd:ord.filter(o=>o.stage!=="deliver"&&o.stage!=="archive").length||null},{id:"transl",ic:"🤖",lb:"Перевод",bd:bs("translate")||null},{id:"editor",ic:"🔧",lb:"Редактор",bd:bs("ai_edit")||null},{id:"rev",ic:"✏️",lb:"Ревью",bd:bs("review")||null},{id:"exec",ic:"👥",lb:"Исполнители"},{id:"set",ic:"⚙️",lb:"Настройки"}];
 
@@ -225,8 +234,6 @@ export default function App(){
     <main className="M">
       <div className="TB">
         <h2>{nav.find(n=>n.id===pg)?.ic} {nav.find(n=>n.id===pg)?.lb}</h2>
-        
-        {/* НОВАЯ КНОПКА СОРТИРОВКИ */}
         {["ord","analysis","transl","editor","rev"].includes(pg) && (
           <select className="fsl" style={{width:"auto", padding:"3px 8px", fontSize:11, marginLeft:"auto", marginRight: 8}} value={sortBy} onChange={e=>setSortBy(e.target.value)}>
             <option value="id_desc">↓ По ID (Новые)</option>
@@ -234,7 +241,6 @@ export default function App(){
             <option value="name_asc">↓ По клиенту (А-Я)</option>
           </select>
         )}
-
         <div className="ist"><div className={`dot ${driveOk?"on":""}`}/>Drive {driveOk?"✓":"✗"} <div className={`dot ${gok?"on":""}`} style={{marginLeft:8}}/>Sheets</div>
       </div>
       <div className="CT">
@@ -268,7 +274,6 @@ function NewOrd({cur,sCur,ord,sOrd,ak,aok,md,gas,gok,execs,toast,getKey,fm,drive
     sUpl(true);sPrg(5);
     const oid="TW-"+String(ord.length+1).padStart(4,"0");
     const fileLinks=[];
-    
     if(driveOk&&fm.ok()){
       try{
         const folderName=orderFolderName({clientName:cl,langPair:lp});
@@ -498,9 +503,73 @@ function RevPage({ord,sOrd,gas,gok,toast,fm,driveOk,handleArchive,handleDelete})
   </div>);
 }
 
-// ═══ EXECUTORS & SETTINGS Опущены для краткости (Они остаются без изменений) ═══
-function ExecPage({execs,sExecs,toast}){return <div className="cd">...</div>}
+// ═══ EXECUTORS ═══
+function ExecPage({execs,sExecs,toast}){
+  const[ed,sEd]=useState(null);const[nm,sNm]=useState("");const[rl,sRl]=useState("translator");const[em,sEm]=useState("");const[tg,sTg]=useState("");const[ln,sLn]=useState("");const[sp,sSp]=useState("");const[sv,sSv]=useState("");
+  const startEd=x=>{sEd(x.id);sNm(x.name);sRl(x.role||"translator");sEm(x.email||"");sTg(x.telegram||"");sLn((x.langs||[]).join(", "));sSp((x.spec||[]).join(", "));sSv((x.services||[]).map(s=>s.name+":"+s.price+":"+s.unit).join("\n"));};
+  const startNew=()=>{sEd("new");sNm("");sRl("translator");sEm("");sTg("");sLn("ru-kk");sSp("legal");sSv("Перевод:800:стр.");};
+  const save=()=>{const pL=ln.split(",").map(s=>s.trim()).filter(Boolean);const pS=sp.split(",").map(s=>s.trim()).filter(Boolean);const pV=sv.split("\n").map(l=>{const p=l.split(":");return p.length>=2?{name:p[0].trim(),price:Number(p[1])||0,unit:p[2]?.trim()||"стр."}:null}).filter(Boolean);
+    const ex={id:ed==="new"?Date.now():ed,name:nm,role:rl,email:em,telegram:tg,langs:pL,spec:pS,services:pV};
+    if(ed==="new")sExecs(p=>[...p,ex]);else sExecs(p=>p.map(e=>e.id===ed?ex:e));sEd(null);toast("✓","success");};
+  if(ed!==null)return(<div className="cd"><div className="hd"><h3>{ed==="new"?"➕":"✏️"}</h3></div>
+    <div className="rw r2"><div className="fg"><label className="fl">Имя</label><input className="fi" value={nm} onChange={e=>sNm(e.target.value)}/></div><div className="fg"><label className="fl">Роль</label><select className="fsl" value={rl} onChange={e=>sRl(e.target.value)}><option value="translator">Переводчик</option><option value="editor">Редактор</option><option value="both">Оба</option></select></div></div>
+    <div className="rw r2"><div className="fg"><label className="fl">Email</label><input className="fi" value={em} onChange={e=>sEm(e.target.value)}/></div><div className="fg"><label className="fl">Telegram</label><input className="fi" value={tg} onChange={e=>sTg(e.target.value)}/></div></div>
+    <div className="rw r2"><div className="fg"><label className="fl">Языки (,)</label><input className="fi" value={ln} onChange={e=>sLn(e.target.value)}/></div><div className="fg"><label className="fl">Спец. (,)</label><input className="fi" value={sp} onChange={e=>sSp(e.target.value)}/></div></div>
+    <div className="fg"><label className="fl">Услуги (назв:цена:ед.)</label><textarea className="fi" rows={3} value={sv} onChange={e=>sSv(e.target.value)} style={{resize:"vertical",fontFamily:"'JetBrains Mono',monospace",fontSize:9}}/></div>
+    <div className="bts"><button className="bt bp" onClick={save}>💾</button><button className="bt bs" onClick={()=>sEd(null)}>✕</button></div></div>);
+  return(<><div className="bts" style={{marginTop:0,marginBottom:10}}><button className="bt bp bm" onClick={startNew}>➕ Добавить исполнителя</button></div>
+    {execs.map(ex=><div key={ex.id} className="exec-card"><div style={{display:"flex",justifyContent:"space-between"}}><div><h5>{ex.name}</h5><div style={{fontSize:9,color:"var(--t3)"}}>{ex.role}</div></div><div className="bts" style={{marginTop:0}}><button className="bt bs bm" onClick={()=>startEd(ex)}>✏️</button><button className="bt bs bm" style={{color:"var(--er)"}} onClick={()=>{sExecs(p=>p.filter(e=>e.id!==ex.id))}}>🗑</button></div></div>
+      <div style={{marginTop:4}}>{(ex.langs||[]).map(l=><span key={l} className="exec-tag">{l}</span>)}{(ex.spec||[]).map(s=><span key={s} className="exec-tag">{s}</span>)}</div></div>)}</>);
+}
+
+// ═══ SCENARIO SETTINGS ═══
+function ScenarioSettings({scenarios,sScenarios,toast}){
+  const[ed,sEd]=useState(null);const[nm,sNm]=useState("");const[steps,sSteps]=useState([]);const[cxIds,sCxIds]=useState([]);
+  const allStages=["classify","translate","ai_edit","review"];
+  const startEdit=(sc)=>{sEd(sc.id);sNm(sc.name);sSteps([...(sc.steps||[])]);sCxIds([...(sc.complexities||[])]);};
+  const startNew=()=>{sEd("new");sNm("");sSteps([{stage:"translate",ai:"gemini",model:"gemini-2.0-flash"},{stage:"review",ai:"human",model:""}]);sCxIds([]);};
+  const updStep=(i,k,v)=>sSteps(p=>p.map((s,j)=>j===i?{...s,[k]:v}:s));
+  const save=()=>{const sc={id:ed==="new"?("sc_"+Date.now()):ed,name:nm,steps,complexities:cxIds};if(ed==="new")sScenarios(p=>[...p,sc]);else sScenarios(p=>p.map(s=>s.id===ed?sc:s));sEd(null);toast("✓","success");};
+  if(ed!==null)return(<div className="SC SF"><h4>📋 {ed==="new"?"Новый сценарий":"Редактирование"}</h4>
+    <div className="fg"><label className="fl">Название</label><input className="fi" value={nm} onChange={e=>sNm(e.target.value)}/></div>
+    <div className="fg"><label className="fl">Этапы</label>
+      {steps.map((s,i)=><div key={i} className="step-card"><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}><span className="step-num">{i+1}</span>
+        <select className="fsl" style={{flex:1}} value={s.stage} onChange={e=>updStep(i,"stage",e.target.value)}>{allStages.map(st=><option key={st} value={st}>{SM[st]?.i} {SM[st]?.l}</option>)}</select>
+        <button className="bt bs bm" style={{color:"var(--er)"}} onClick={()=>sSteps(p=>p.filter((_,j)=>j!==i))}>✕</button></div>
+        <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{AI_PROVIDERS.map(ai=><span key={ai.id} className={`ai-chip ${s.ai===ai.id?"on":""}`} onClick={()=>updStep(i,"ai",ai.id)}>{ai.icon} {ai.name}</span>)}<span className={`ai-chip ${s.ai==="human"?"on":""}`} onClick={()=>updStep(i,"ai","human")}>👤</span></div>
+      </div>)}
+      <button className="bt bs bm" onClick={()=>sSteps(p=>[...p,{stage:"translate",ai:"gemini",model:"gemini-2.0-flash"}])} style={{marginTop:4}}>➕ Этап</button>
+    </div>
+    <div className="fg"><label className="fl">Сложность</label><div className="cxg">{CX.map(c=><button key={c.id} className={`cxc ${cxIds.includes(c.id)?"sl":""}`} onClick={()=>sCxIds(p=>p.includes(c.id)?p.filter(x=>x!==c.id):[...p,c.id])}>{c.label}</button>)}</div></div>
+    <div className="bts"><button className="bt bp" onClick={save}>💾</button><button className="bt bs" onClick={()=>sEd(null)}>✕</button></div>
+  </div>);
+  return(<div className="SC SF"><h4>📋 Сценарии перевода</h4>
+    <div className="bts" style={{marginBottom:8}}><button className="bt bp bm" onClick={startNew}>➕ Новый</button></div>
+    {scenarios.map(sc=><div key={sc.id} className="scenario-card" onClick={()=>startEdit(sc)}>
+      <div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:12,fontWeight:600}}>{sc.name}</div><div style={{fontSize:9,color:"var(--t3)"}}>{(sc.steps||[]).map((s,j)=><span key={j}>{j>0?" → ":""}{SM[s.stage]?.i||"👤"} {s.ai}</span>)}</div>
+      {sc.complexities?.length>0&&<div style={{marginTop:3}}>{sc.complexities.map(c=><span key={c} className="exec-tag">{CX.find(x=>x.id===c)?.s||c}</span>)}</div>}</div>
+      <button className="bt bs bm" onClick={e=>{e.stopPropagation();sScenarios(p=>p.filter(s=>s.id!==sc.id))}} style={{color:"var(--er)"}}>🗑</button></div>
+    </div>)}
+  </div>);
+}
+
+// ═══ SETTINGS ═══
 function SetPage({keys,sKeys,gu,sGu,md,sMd,aep,sAep,scenarios,sScenarios,driveClientId,sDriveClientId,gok,driveOk,connectDrive,toast}){
   const[u,sU]=useState(gu);
-  return(<div className="SG"><div className="SC"><h4>🔗 Google Sheets (GAS)</h4><div className={`ds ${gok?"ok":"er"}`}>{gok?"✓ POST Активирован":"✗"}</div><div className="fg"><label className="fl">GAS URL</label><input className="fi" value={u} onChange={e=>sU(e.target.value)}/></div><button className="bt bp bm" onClick={()=>{sGu(u);toast("OK","info")}}>💾</button></div></div>);
+  const uk=(p,v)=>{const n={...keys,[p]:v};sKeys(n);};
+  return(<div className="SG">
+    <div className="SC"><h4>🔗 Google Drive (OAuth)</h4><div className={`ds ${driveOk?"ok":"er"}`}>{driveOk?"✓ Drive подключён":"✗ Не подключён"}</div>
+      <div className="fg"><label className="fl">Google Cloud Client ID</label><input className="fi" value={driveClientId} onChange={e=>sDriveClientId(e.target.value)} placeholder="xxxx.apps.googleusercontent.com"/></div>
+      <p style={{fontSize:8,color:"var(--t3)",marginBottom:4}}>Google Cloud Console → APIs → OAuth 2.0 → Web Client ID</p>
+      <button className="bt bp bm" onClick={connectDrive}>🔑 Подключить Drive</button></div>
+    <div className="SC"><h4>🔗 Google Sheets (GAS)</h4><div className={`ds ${gok?"ok":"er"}`}>{gok?"✓ POST Активирован":"✗"}</div>
+      <div className="fg"><label className="fl">GAS URL</label><input className="fi" value={u} onChange={e=>sU(e.target.value)}/></div>
+      <button className="bt bp bm" onClick={()=>{sGu(u);toast("OK","info")}}>💾</button></div>
+    <div className="SC"><h4>🔑 AI Ключи</h4>
+      {AI_PROVIDERS.map(ai=><div key={ai.id} className="fg"><label className="fl">{ai.icon} {ai.name}</label><input className="fi" type="password" value={keys[ai.id]||""} onChange={e=>uk(ai.id,e.target.value)}/></div>)}
+      <div className="fg"><label className="fl">Модель по умолч.</label><select className="fsl" value={md} onChange={e=>sMd(e.target.value)}>{AI_PROVIDERS[0].models.map(m=><option key={m}>{m}</option>)}</select></div></div>
+    <div className="SC"><h4>🔧 Промпт «Ред. ИИ»</h4>
+      <textarea className="fi" rows={3} value={aep} onChange={e=>sAep(e.target.value)} style={{resize:"vertical",fontFamily:"'JetBrains Mono',monospace",fontSize:9}}/></div>
+    <ScenarioSettings scenarios={scenarios} sScenarios={sScenarios} toast={toast}/>
+  </div>);
 }
